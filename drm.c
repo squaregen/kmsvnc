@@ -1181,14 +1181,3 @@ static inline void convert_x_tiled_with_orientation(const int tilex, const int t
     }
 }
 
-/* Replacement for convert_nvidia_x_tiled_kmsbuf */
-void convert_nvidia_x_tiled_kmsbuf(const char* in, int width, int height, char* buff)
-{
-    convert_x_tiled_with_orientation(16, 128, in, width, height, buff);
-}
-
-/* Replacement for convert_intel_x_tiled_kmsbuf */
-void convert_intel_x_tiled_kmsbuf(const char* in, int width, int height, char* buff)
-{
-    convert_x_tiled_with_orientation(128, 8, in, width, height, buff);
-}
