@@ -109,13 +109,14 @@ static inline void convert_x_tiled(const int tilex, const int tiley, const char 
     convert_bgra_to_rgba(kmsvnc->drm->kms_convert_buf, width, height, buff);
 }
 
-void convert_nvidia_x_tiled_kmsbuf(const char *in, int width, int height, char *buff)
+void convert_nvidia_x_tiled_kmsbuf(const char* in, int width, int height, char* buff)
 {
-    convert_x_tiled(16, 128, in, width, height, buff);
+    convert_x_tiled_with_orientation(16, 128, in, width, height, buff);
 }
-void convert_intel_x_tiled_kmsbuf(const char *in, int width, int height, char *buff)
+
+void convert_intel_x_tiled_kmsbuf(const char* in, int width, int height, char* buff)
 {
-    convert_x_tiled(128, 8, in, width, height, buff);
+    convert_x_tiled_with_orientation(128, 8, in, width, height, buff);
 }
 
 static void convert_vaapi(const char *in, int width, int height, char *buff) {
