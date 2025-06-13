@@ -611,7 +611,23 @@ int drm_open() {
 
     // Rileva l'orientamento del pannello dal connettore associato al CRTC
     drm->panel_orientation = detect_panel_orientation(drm->drm_fd, drm->plane->crtc_id);
+    // Dopo aver impostato drm->panel_orientation in drm_open()
+    if (drm->panel_orientation == DRM_MODE_PANEL_ORIENTATION_LEFT_SIDE_UP ||
+        drm->panel_orientation == DRM_MODE_PANEL_ORIENTATION_RIGHT_SIDE_UP) {
+        // Scambia larghezza e altezza per rotazioni di 90 gradi
+        printf("Swapping screen dimensions for 90 degree rotation: %dx%d -> %dx%d\n",
+            kmsvnc->server->width, kmsvnc->server->height,
+            kmsvnc->server->height, kmsvnc->server->width);
 
+        // Ricrea il frameBuffer con dimensioni scambiate
+        if (kmsvnc->server->frameBuffer) {
+            free(kmsvnc->server->frameBuffer);
+        }
+        kmsvnc->server->width = drm->mfb->height;
+        kmsvnc->server->height = drm->mfb->width;
+        kmsvnc->server->paddedWidthInBytes = kmsvnc->server->width * BYTES_PER_PIXEL;
+        kmsvnc->server->frameBuffer = malloc(kmsvnc->server->width * kmsvnc->server->height * BYTES_PER_PIXEL);
+    }
     drm->mmap_fd = drm->drm_fd;
     drm->mmap_size = drm->mfb->width * drm->mfb->height * BYTES_PER_PIXEL;
     drm->funcs = malloc(sizeof(struct kmsvnc_drm_funcs));
