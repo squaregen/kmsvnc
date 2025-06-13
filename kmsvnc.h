@@ -28,7 +28,7 @@ struct vnc_opt
     char *password_file;
 };
 
-struct kmsvnc_drm_data
+struct kmsvnc_data
 {
     int drm_fd;
     int drm_master_fd;
