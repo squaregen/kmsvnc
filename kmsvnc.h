@@ -28,36 +28,37 @@ struct vnc_opt
     char *password_file;
 };
 
-struct kmsvnc_data
+struct kmsvnc_drm_data
 {
-    char *debug_capture_fb;
-    char *card;
-    char *force_driver;
-    struct vnc_opt *vnc_opt;
-    char input_wakeup;
-    char disable_input;
-    int va_derive_enabled;
-    char debug_enabled;
-    int source_plane;
-    int source_crtc;
-    int input_width;
-    int input_height;
-    int input_offx;
-    int input_offy;
-    char screen_blank;
-    char screen_blank_restore;
-    char va_byteorder_swap;
-    struct kmsvnc_drm_data *drm;
-    struct kmsvnc_input_data *input;
-    struct kmsvnc_keymap_data *keymap;
-    struct kmsvnc_va_data *va;
-    rfbScreenInfoPtr server;
-    char shutdown;
-    char capture_cursor;
-    char *cursor_bitmap;
-    int cursor_bitmap_len;
-    char *buf;
-    char *buf1;
+    int drm_fd;
+    int drm_master_fd;
+    drmVersionPtr drm_ver;
+    int prime_fd;
+    drmModePlane* plane;
+    drmModePlane* cursor_plane;
+    drmModePlaneRes* plane_res;
+    drmModeFB2* mfb;
+    drmModeFB2* cursor_mfb;
+    uint32_t plane_id;
+    int mmap_fd;
+    size_t mmap_size;
+    off_t mmap_offset;
+    char* mapped;
+    char* cursor_mapped;
+    size_t cursor_mmap_size;
+    char skip_map;
+    struct kmsvnc_drm_funcs* funcs;
+    char* pixfmt_name;
+    char* mod_vendor;
+    char* mod_name;
+    char* kms_convert_buf;
+    size_t kms_convert_buf_len;
+    char* kms_cpy_tmp_buf;
+    size_t kms_cpy_tmp_buf_len;
+    char* kms_cursor_buf;
+    size_t kms_cursor_buf_len;
+    struct kmsvnc_drm_gamma_data* gamma;
+    int panel_orientation;  /* Added for panel orientation support */
 };
 
 

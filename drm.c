@@ -494,7 +494,7 @@ int drm_dump_cursor_plane(char **data, int *width, int *height) {
 }
 
 int drm_open() {
-    struct kmsvnc_drm_data *drm = malloc(sizeof(struct kmsvnc_drm_data));
+    struct kmsvnc_drm_data* drm = malloc(sizeof(struct kmsvnc_drm_data));
     if (!drm) KMSVNC_FATAL("memory allocation error at %s:%d\n", __FILE__, __LINE__);
     memset(drm, 0, sizeof(struct kmsvnc_drm_data));
     kmsvnc->drm = drm;
@@ -533,10 +533,10 @@ int drm_open() {
         drm->gamma = malloc(sizeof(struct kmsvnc_drm_gamma_data));
         if (!drm->gamma) KMSVNC_FATAL("memory allocation error at %s:%d\n", __FILE__, __LINE__);
         memset(drm->gamma, 0, sizeof(struct kmsvnc_drm_gamma_data));
-        drmModeCrtc *target_crtc = drmModeGetCrtc(drm->drm_fd, drm->plane->crtc_id);
+        drmModeCrtc* target_crtc = drmModeGetCrtc(drm->drm_fd, drm->plane->crtc_id);
         if (target_crtc) {
             drm->gamma->size = (uint32_t)target_crtc->gamma_size;
-            drm->gamma->red = malloc(drm->gamma->size*sizeof(uint16_t)*3);
+            drm->gamma->red = malloc(drm->gamma->size * sizeof(uint16_t) * 3);
             if (!drm->gamma->size) {
                 fprintf(stderr, "drm->gamma->size = %u, not setting gamma.\n", drm->gamma->size);
             }
@@ -545,9 +545,9 @@ int drm_open() {
                 fprintf(stderr, "not setting gamma.\n");
             }
             else {
-                memset(drm->gamma->red, 0, drm->gamma->size*sizeof(uint16_t)*3);
+                memset(drm->gamma->red, 0, drm->gamma->size * sizeof(uint16_t) * 3);
                 drm->gamma->green = drm->gamma->red + drm->gamma->size;
-                drm->gamma->blue = drm->gamma->red + drm->gamma->size*2;
+                drm->gamma->blue = drm->gamma->red + drm->gamma->size * 2;
                 if (kmsvnc->screen_blank_restore) {
                     int step = 0x10000 / drm->gamma->size;
                     for (int i = 0; i < drm->gamma->size; i++) {
@@ -563,16 +563,16 @@ int drm_open() {
                         fprintf(stderr, "gamma: %05d %05hu %05hu %05hu\n", i, drm->gamma->red[i], drm->gamma->green[i], drm->gamma->blue[i]);
                     }
                 }
-                uint16_t *new_gamma_red = malloc(drm->gamma->size*sizeof(uint16_t)*3);
+                uint16_t* new_gamma_red = malloc(drm->gamma->size * sizeof(uint16_t) * 3);
                 if (!new_gamma_red) {
                     fprintf(stderr, "memory allocation error at %s:%d\n", __FILE__, __LINE__);
                     fprintf(stderr, "not setting gamma.\n");
                 }
                 else {
-                    memset(new_gamma_red, 0, drm->gamma->size*sizeof(uint16_t)*3);
-                    uint16_t *new_gamma_green = new_gamma_red + drm->gamma->size;
-                    uint16_t *new_gamma_blue = new_gamma_red + drm->gamma->size*2;
-                    if (drmModeCrtcSetGamma(drm->drm_master_fd ?: drm->drm_fd, drm->plane->crtc_id, drm->gamma->size, new_gamma_red, new_gamma_green, new_gamma_blue)) perror("Failed to set gamma");
+                    memset(new_gamma_red, 0, drm->gamma->size * sizeof(uint16_t) * 3);
+                    uint16_t* new_gamma_green = new_gamma_red + drm->gamma->size;
+                    uint16_t* new_gamma_blue = new_gamma_red + drm->gamma->size * 2;
+                    if (drmModeCrtcSetGamma(drm->drm_master_fd ? : drm->drm_fd, drm->plane->crtc_id, drm->gamma->size, new_gamma_red, new_gamma_green, new_gamma_blue)) perror("Failed to set gamma");
                 }
                 if (new_gamma_red) {
                     free(new_gamma_red);
@@ -608,11 +608,16 @@ int drm_open() {
         KMSVNC_FATAL("No handle set on framebuffer: maybe you need some additional capabilities?\n");
     }
 
+    // Rileva l'orientamento del pannello dal connettore associato al CRTC
+    drm->panel_orientation = detect_panel_orientation(drm->drm_fd, drm->plane->crtc_id);
+
     drm->mmap_fd = drm->drm_fd;
     drm->mmap_size = drm->mfb->width * drm->mfb->height * BYTES_PER_PIXEL;
     drm->funcs = malloc(sizeof(struct kmsvnc_drm_funcs));
     if (!drm->funcs) KMSVNC_FATAL("memory allocation error at %s:%d\n", __FILE__, __LINE__);
-    drm->funcs->convert = convert_bgra_to_rgba;
+
+    // Usa la funzione di conversione che tiene conto dell'orientamento
+    drm->funcs->convert = convert_bgra_to_rgba_with_orientation;
     drm->funcs->sync_start = drm_sync_noop;
     drm->funcs->sync_end = drm_sync_noop;
 
@@ -620,7 +625,6 @@ int drm_open() {
 
     return 0;
 }
-
 
 static int drm_kmsbuf_prime() {
     struct kmsvnc_drm_data *drm = kmsvnc->drm;
@@ -770,4 +774,420 @@ int drm_vendors() {
     }
 
     return 0;
+}
+/* Panel orientation constants */
+#define DRM_MODE_PANEL_ORIENTATION_NORMAL       0
+#define DRM_MODE_PANEL_ORIENTATION_UPSIDE_DOWN  1
+#define DRM_MODE_PANEL_ORIENTATION_LEFT_SIDE_UP 2
+#define DRM_MODE_PANEL_ORIENTATION_RIGHT_SIDE_UP 3
+
+/* Check panel orientation property of the connector */
+static int detect_panel_orientation(int drm_fd, uint32_t crtc_id) {
+    int orientation = DRM_MODE_PANEL_ORIENTATION_NORMAL; /* Default to normal orientation */
+    drmModeRes* resources = drmModeGetResources(drm_fd);
+
+    if (!resources) {
+        fprintf(stderr, "Failed to get DRM resources\n");
+        return orientation;
+    }
+
+    /* Find the connector connected to this CRTC */
+    drmModeConnector* connector = NULL;
+    for (int i = 0; i < resources->count_connectors; i++) {
+        drmModeConnector* temp_connector = drmModeGetConnector(drm_fd, resources->connectors[i]);
+        if (!temp_connector)
+            continue;
+
+        if (temp_connector->encoder_id) {
+            drmModeEncoder* encoder = drmModeGetEncoder(drm_fd, temp_connector->encoder_id);
+            if (encoder) {
+                if (encoder->crtc_id == crtc_id) {
+                    connector = temp_connector;
+                    drmModeFreeEncoder(encoder);
+                    break;
+                }
+                drmModeFreeEncoder(encoder);
+            }
+        }
+        drmModeFreeConnector(temp_connector);
+    }
+
+    if (!connector) {
+        fprintf(stderr, "No connector found for CRTC %d\n", crtc_id);
+        drmModeFreeResources(resources);
+        return orientation;
+    }
+
+    /* Check for panel_orientation property */
+    drmModeObjectPropertiesPtr props = drmModeObjectGetProperties(drm_fd,
+        connector->connector_id,
+        DRM_MODE_OBJECT_CONNECTOR);
+    if (!props) {
+        fprintf(stderr, "Failed to get connector properties\n");
+        drmModeFreeConnector(connector);
+        drmModeFreeResources(resources);
+        return orientation;
+    }
+
+    for (int i = 0; i < props->count_props; i++) {
+        drmModePropertyPtr prop = drmModeGetProperty(drm_fd, props->props[i]);
+        if (!prop)
+            continue;
+
+        if (strcmp(prop->name, "panel orientation") == 0) {
+            /* Found panel orientation property */
+            uint64_t value = props->prop_values[i];
+
+            /* Read the enum values */
+            for (int j = 0; j < prop->count_enums; j++) {
+                if (prop->enums[j].value == value) {
+                    if (strcmp(prop->enums[j].name, "Normal") == 0) {
+                        orientation = DRM_MODE_PANEL_ORIENTATION_NORMAL;
+                    }
+                    else if (strcmp(prop->enums[j].name, "Upside Down") == 0) {
+                        orientation = DRM_MODE_PANEL_ORIENTATION_UPSIDE_DOWN;
+                    }
+                    else if (strcmp(prop->enums[j].name, "Left Side Up") == 0) {
+                        orientation = DRM_MODE_PANEL_ORIENTATION_LEFT_SIDE_UP;
+                    }
+                    else if (strcmp(prop->enums[j].name, "Right Side Up") == 0) {
+                        orientation = DRM_MODE_PANEL_ORIENTATION_RIGHT_SIDE_UP;
+                    }
+                    printf("Panel orientation: %s (%d)\n", prop->enums[j].name, orientation);
+                    break;
+                }
+            }
+        }
+        drmModeFreeProperty(prop);
+    }
+
+    drmModeFreeObjectProperties(props);
+    drmModeFreeConnector(connector);
+    drmModeFreeResources(resources);
+
+    return orientation;
+}
+
+/* Rotate image 90 degrees clockwise */
+static void rotate_90_clockwise(const char* in, int width, int height, char* buff) {
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int src_idx = (y * width + x) * BYTES_PER_PIXEL;
+            int dst_idx = ((width - 1 - x) * height + y) * BYTES_PER_PIXEL;
+
+            buff[dst_idx + 0] = in[src_idx + 0];
+            buff[dst_idx + 1] = in[src_idx + 1];
+            buff[dst_idx + 2] = in[src_idx + 2];
+            buff[dst_idx + 3] = in[src_idx + 3];
+        }
+    }
+}
+
+/* Rotate image 90 degrees counter-clockwise */
+static void rotate_90_counterclockwise(const char* in, int width, int height, char* buff) {
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int src_idx = (y * width + x) * BYTES_PER_PIXEL;
+            int dst_idx = (x * height + (height - 1 - y)) * BYTES_PER_PIXEL;
+
+            buff[dst_idx + 0] = in[src_idx + 0];
+            buff[dst_idx + 1] = in[src_idx + 1];
+            buff[dst_idx + 2] = in[src_idx + 2];
+            buff[dst_idx + 3] = in[src_idx + 3];
+        }
+    }
+}
+
+/* Rotate image 180 degrees */
+static void rotate_180(const char* in, int width, int height, char* buff) {
+    int total_pixels = width * height;
+    for (int i = 0; i < total_pixels; i++) {
+        int src_idx = i * BYTES_PER_PIXEL;
+        int dst_idx = (total_pixels - 1 - i) * BYTES_PER_PIXEL;
+
+        buff[dst_idx + 0] = in[src_idx + 0];
+        buff[dst_idx + 1] = in[src_idx + 1];
+        buff[dst_idx + 2] = in[src_idx + 2];
+        buff[dst_idx + 3] = in[src_idx + 3];
+    }
+}
+
+/* Wrapper functions for converting with orientation */
+static void convert_bgra_to_rgba_with_orientation(const char* in, int width, int height, char* buff) {
+    /* First allocate a temporary buffer if we need rotation */
+    char* temp_buf = buff;
+    int temp_needed = 0;
+
+    if (kmsvnc->drm->panel_orientation != DRM_MODE_PANEL_ORIENTATION_NORMAL) {
+        if (convert_buf_allocate(width * height * BYTES_PER_PIXEL)) return;
+        temp_buf = kmsvnc->drm->kms_convert_buf;
+        temp_needed = 1;
+    }
+
+    /* First do the BGRA to RGBA conversion */
+    if (likely(in != temp_buf)) {
+        memcpy(temp_buf, in, width * height * BYTES_PER_PIXEL);
+    }
+
+    for (int i = 0; i < width * height * BYTES_PER_PIXEL; i += BYTES_PER_PIXEL) {
+        uint32_t pixdata = htonl(*((uint32_t*)(temp_buf + i)));
+        temp_buf[i + 0] = (pixdata & 0x0000ff00) >> 8;
+        temp_buf[i + 2] = (pixdata & 0xff000000) >> 24;
+    }
+
+    /* Then apply rotation if needed */
+    if (temp_needed) {
+        switch (kmsvnc->drm->panel_orientation) {
+        case DRM_MODE_PANEL_ORIENTATION_UPSIDE_DOWN:
+            rotate_180(temp_buf, width, height, buff);
+            break;
+        case DRM_MODE_PANEL_ORIENTATION_LEFT_SIDE_UP:
+            rotate_90_counterclockwise(temp_buf, width, height, buff);
+            break;
+        case DRM_MODE_PANEL_ORIENTATION_RIGHT_SIDE_UP:
+            rotate_90_clockwise(temp_buf, width, height, buff);
+            break;
+        }
+    }
+}
+
+static void convert_vaapi_with_orientation(const char* in, int width, int height, char* buff) {
+    /* First do the regular VAAPI conversion */
+    va_hwframe_to_vaapi(buff);
+
+    if ((KMSVNC_FOURCC_TO_INT('R', 'G', 'B', 0) & kmsvnc->va->selected_fmt->fourcc) == KMSVNC_FOURCC_TO_INT('R', 'G', 'B', 0)) {
+        /* No color conversion needed */
+    }
+    else {
+        /* Existing color conversion code */
+        if (kmsvnc->va->selected_fmt->depth == 30) {
+            for (int i = 0; i < width * height * BYTES_PER_PIXEL; i += BYTES_PER_PIXEL) {
+                uint32_t pixdata = __builtin_bswap32(htonl(*((uint32_t*)(buff + i))));
+                buff[i] = (pixdata & 0x3ff00000) >> 20 >> 2;
+                buff[i + 1] = (pixdata & 0xffc00) >> 10 >> 2;
+                buff[i + 2] = (pixdata & 0x3ff) >> 2;
+            }
+        }
+        else {
+            if (!kmsvnc->va->selected_fmt->byte_order) {
+                for (int i = 0; i < width * height * BYTES_PER_PIXEL; i += BYTES_PER_PIXEL) {
+                    uint32_t* pixdata = (uint32_t*)(buff + i);
+                    *pixdata = __builtin_bswap32(*pixdata);
+                }
+            }
+        }
+
+        if ((kmsvnc->va->selected_fmt->blue_mask | kmsvnc->va->selected_fmt->red_mask) < 0x1000000) {
+            for (int i = 0; i < width * height * BYTES_PER_PIXEL; i += BYTES_PER_PIXEL) {
+                uint32_t* pixdata = (uint32_t*)(buff + i);
+                *pixdata = ntohl(htonl(*pixdata) << 8);
+            }
+        }
+
+        if (kmsvnc->va->selected_fmt->blue_mask > kmsvnc->va->selected_fmt->red_mask) {
+            for (int i = 0; i < width * height * BYTES_PER_PIXEL; i += BYTES_PER_PIXEL) {
+                uint32_t pixdata = htonl(*((uint32_t*)(buff + i)));
+                buff[i + 0] = (pixdata & 0x0000ff00) >> 8;
+                buff[i + 2] = (pixdata & 0xff000000) >> 24;
+            }
+        }
+    }
+
+    /* Now apply rotation if needed */
+    if (kmsvnc->drm->panel_orientation != DRM_MODE_PANEL_ORIENTATION_NORMAL) {
+        /* Allocate temporary buffer for rotation */
+        if (convert_buf_allocate(width * height * BYTES_PER_PIXEL)) return;
+
+        /* Copy original converted buffer to temp buffer */
+        memcpy(kmsvnc->drm->kms_convert_buf, buff, width * height * BYTES_PER_PIXEL);
+
+        /* Apply rotation */
+        switch (kmsvnc->drm->panel_orientation) {
+        case DRM_MODE_PANEL_ORIENTATION_UPSIDE_DOWN:
+            rotate_180(kmsvnc->drm->kms_convert_buf, width, height, buff);
+            break;
+        case DRM_MODE_PANEL_ORIENTATION_LEFT_SIDE_UP:
+            rotate_90_counterclockwise(kmsvnc->drm->kms_convert_buf, width, height, buff);
+            break;
+        case DRM_MODE_PANEL_ORIENTATION_RIGHT_SIDE_UP:
+            rotate_90_clockwise(kmsvnc->drm->kms_convert_buf, width, height, buff);
+            break;
+        }
+    }
+
+    int drm_vendors() {
+        struct kmsvnc_drm_data* drm = kmsvnc->drm;
+
+        char* driver_name;
+        if (kmsvnc->force_driver) {
+            printf("using %s instead of %s\n", kmsvnc->force_driver, drm->drm_ver->name);
+            driver_name = kmsvnc->force_driver;
+        }
+        else {
+            driver_name = drm->drm_ver->name;
+        }
+
+        if (strcmp(driver_name, "i915") == 0 || strcmp(driver_name, "amdgpu") == 0)
+        {
+            if (fourcc_mod_is_vendor(drm->mfb->modifier, INTEL)) {
+                if (strstr(drm->mod_name, "CCS")) {
+                    printf("warn: intel with CCS modifier detected, please set INTEL_DEBUG=noccs\n");
+                }
+            };
+            /* Use orientation-aware VAAPI convert function */
+            drm->funcs->convert = &convert_vaapi_with_orientation;
+            if (drm_kmsbuf_prime_vaapi()) return 1;
+        }
+        else if (strcmp(driver_name, "nvidia-drm") == 0)
+        {
+            if (check_pixfmt_non_vaapi()) return 1;
+            printf("warn: nvidia card detected. Currently only x-tiled framebuffer is supported. Performance may suffer.\n");
+            if (drm->mfb->modifier != DRM_FORMAT_MOD_NONE && drm->mfb->modifier != DRM_FORMAT_MOD_LINEAR) {
+                /* Need to modify these to be orientation-aware too */
+                drm->funcs->convert = &convert_nvidia_x_tiled_kmsbuf;
+            }
+            if (drm_kmsbuf_dumb()) return 1;
+        }
+        else if (strcmp(driver_name, "vmwgfx") == 0 ||
+            strcmp(driver_name, "vboxvideo") == 0 ||
+            strcmp(driver_name, "virtio_gpu") == 0
+            )
+        {
+            if (check_pixfmt_non_vaapi()) return 1;
+            if (drm->mfb->modifier != DRM_FORMAT_MOD_NONE && drm->mfb->modifier != DRM_FORMAT_MOD_LINEAR) {
+                printf("warn: modifier is not LINEAR, please create an issue with your modifier.\n");
+            }
+            /* virtgl does not work */
+            if (drm_kmsbuf_dumb()) return 1;
+        }
+        else if (strcmp(driver_name, "test-prime") == 0)
+        {
+            if (check_pixfmt_non_vaapi()) return 1;
+            if (drm_kmsbuf_prime()) return 1;
+        }
+        else if (strcmp(driver_name, "test-map-dumb") == 0)
+        {
+            if (check_pixfmt_non_vaapi()) return 1;
+            if (drm_kmsbuf_dumb()) return 1;
+        }
+        else if (strcmp(driver_name, "test-i915-gem") == 0)
+        {
+            if (check_pixfmt_non_vaapi()) return 1;
+            struct drm_gem_flink flink;
+            flink.handle = drm->mfb->handles[0];
+            DRM_IOCTL_MUST(drm->drm_fd, DRM_IOCTL_GEM_FLINK, &flink);
+
+            struct drm_gem_open open_arg;
+            open_arg.name = flink.name;
+            DRM_IOCTL_MUST(drm->drm_fd, DRM_IOCTL_GEM_OPEN, &open_arg);
+
+            struct drm_i915_gem_mmap_gtt mmap_arg;
+            mmap_arg.handle = open_arg.handle;
+            DRM_IOCTL_MUST(drm->drm_fd, DRM_IOCTL_I915_GEM_MMAP_GTT, &mmap_arg);
+            drm->mmap_size = open_arg.size;
+            drm->mmap_offset = mmap_arg.offset;
+        }
+        else if (strcmp(driver_name, "test-i915-prime-xtiled") == 0)
+        {
+            if (check_pixfmt_non_vaapi()) return 1;
+            drm->funcs->convert = &convert_intel_x_tiled_kmsbuf;
+            if (drm_kmsbuf_prime()) return 1;
+        }
+        else
+        {
+            if (check_pixfmt_non_vaapi()) return 1;
+            fprintf(stderr, "Untested drm driver, use at your own risk!\n");
+            if (drm->mfb->modifier != DRM_FORMAT_MOD_NONE && drm->mfb->modifier != DRM_FORMAT_MOD_LINEAR) {
+                printf("warn: modifier is not LINEAR, please create an issue with your driver and modifier.\n");
+            }
+            if (drm_kmsbuf_dumb()) return 1;
+        }
+
+        if (!drm->skip_map && !drm->mapped)
+        {
+            printf("mapping with size = %lu, offset = %ld, fd = %d\n", drm->mmap_size, drm->mmap_offset, drm->mmap_fd);
+            drm->mapped = mmap(NULL, drm->mmap_size, PROT_READ, MAP_SHARED, drm->mmap_fd, drm->mmap_offset);
+            if (drm->mapped == MAP_FAILED)
+            {
+                KMSVNC_FATAL("Failed to mmap: %s\n", strerror(errno));
+            }
+        }
+
+        return 0;
+    }
+}
+
+/* Modified convert_x_tiled to handle orientation */
+static inline void convert_x_tiled_with_orientation(const int tilex, const int tiley, const char* in, int width, int height, char* buff)
+{
+    if (width % tilex)
+    {
+        return;
+    }
+    if (height % tiley)
+    {
+        int sno = (width / tilex) + (height / tiley) * (width / tilex);
+        int ord = (width % tilex) + (height % tiley) * tilex;
+        int max_offset = sno * tilex * tiley + ord;
+        if (kmsvnc->drm->kms_cpy_tmp_buf_len < max_offset * 4 + 4)
+        {
+            if (kmsvnc->drm->kms_cpy_tmp_buf)
+                free(kmsvnc->drm->kms_convert_buf);
+            kmsvnc->drm->kms_cpy_tmp_buf = malloc(max_offset * 4 + 4);
+            if (!kmsvnc->drm->kms_cpy_tmp_buf) return;
+            kmsvnc->drm->kms_cpy_tmp_buf_len = max_offset * 4 + 4;
+        }
+        memcpy(kmsvnc->drm->kms_cpy_tmp_buf, in, max_offset * 4 + 4);
+        in = (const char*)kmsvnc->drm->kms_cpy_tmp_buf;
+    }
+    if (convert_buf_allocate(width * height * 4)) return;
+    for (int y = 0; y < height; y++)
+    {
+        for (int x = 0; x < width; x++)
+        {
+            int sno = (x / tilex) + (y / tiley) * (width / tilex);
+            int ord = (x % tilex) + (y % tiley) * tilex;
+            int offset = sno * tilex * tiley + ord;
+            memcpy(kmsvnc->drm->kms_convert_buf + (x + y * width) * 4, in + offset * 4, 4);
+        }
+    }
+
+    /* Apply orientation if needed */
+    if (kmsvnc->drm->panel_orientation == DRM_MODE_PANEL_ORIENTATION_NORMAL) {
+        /* Standard conversion */
+        convert_bgra_to_rgba(kmsvnc->drm->kms_convert_buf, width, height, buff);
+    }
+    else {
+        /* First convert colors in the temporary buffer */
+        for (int i = 0; i < width * height * BYTES_PER_PIXEL; i += BYTES_PER_PIXEL) {
+            uint32_t pixdata = htonl(*((uint32_t*)(kmsvnc->drm->kms_convert_buf + i)));
+            kmsvnc->drm->kms_convert_buf[i + 0] = (pixdata & 0x0000ff00) >> 8;
+            kmsvnc->drm->kms_convert_buf[i + 2] = (pixdata & 0xff000000) >> 24;
+        }
+
+        /* Then apply rotation */
+        switch (kmsvnc->drm->panel_orientation) {
+        case DRM_MODE_PANEL_ORIENTATION_UPSIDE_DOWN:
+            rotate_180(kmsvnc->drm->kms_convert_buf, width, height, buff);
+            break;
+        case DRM_MODE_PANEL_ORIENTATION_LEFT_SIDE_UP:
+            rotate_90_counterclockwise(kmsvnc->drm->kms_convert_buf, width, height, buff);
+            break;
+        case DRM_MODE_PANEL_ORIENTATION_RIGHT_SIDE_UP:
+            rotate_90_clockwise(kmsvnc->drm->kms_convert_buf, width, height, buff);
+            break;
+        }
+    }
+}
+
+/* Replacement for convert_nvidia_x_tiled_kmsbuf */
+void convert_nvidia_x_tiled_kmsbuf(const char* in, int width, int height, char* buff)
+{
+    convert_x_tiled_with_orientation(16, 128, in, width, height, buff);
+}
+
+/* Replacement for convert_intel_x_tiled_kmsbuf */
+void convert_intel_x_tiled_kmsbuf(const char* in, int width, int height, char* buff)
+{
+    convert_x_tiled_with_orientation(128, 8, in, width, height, buff);
 }
